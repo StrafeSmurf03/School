@@ -1,0 +1,6 @@
+name = ""
+vsphere_user = ""
+vsphere_password = ""
+vsphere_server = "192.168.1.10" 
+ssh_username = ""
+ssh_key = ""
