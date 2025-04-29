@@ -1,0 +1,15 @@
+- name: Veeam Backup & Replication Install
+  hosts: veeam
+  tasks:
+    - include_role:
+        name: veeamhub.veeam.veeam_vas
+        tasks_from: vbr_install
+      vars:
+        version: "12"
+        iso_download: true
+        sql_authentication: "1"
+        sql_username: "sql_gebruiker"
+        sql_password: "Welkom01!"
+        
+
+ 

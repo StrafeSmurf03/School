@@ -1,0 +1,12 @@
+[veeam]
+10.10.0.5 
+
+[veeam:vars]
+ansible_user='user_remotehost'
+ansible_password='password_remotehost'
+ansible_port=5986
+ansible_connection=winrm
+ansible_winrm_transport=ntlm
+ansible_winrm_server_cert_validation=ignore
+       
+      
