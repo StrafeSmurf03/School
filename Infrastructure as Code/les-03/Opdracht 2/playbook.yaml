@@ -1,0 +1,91 @@
+# Playbook 1: Update alle packages op een Ubuntu VM
+- name: Update alle packages op Ubuntu VM
+  hosts: ubuntu
+  become: yes
+  tasks:
+    - name: Update apt packages
+      ansible.builtin.apt:
+        name: "*"
+        state: latest
+        
+# /etc/hosts aanpassen om esxi server toe te voegen
+- name: Aanpassen /etc/hosts voor esxi server
+  hosts: ubuntu
+  vars:
+    esxi_ip: "192.168.1.10" 
+  tasks:
+    - name: Toevoegen van esxi server aan /etc/hosts
+      become: yes
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ esxi_ip }} esxi"
+        state: present
+
+# User 'test' toevoegen
+- name: User test toevoegen
+  hosts: ubuntu
+  become: yes
+  tasks:
+    - name: Aanmaken van gebruiker 'test'
+      user:
+        name: test
+        state: present
+        shell: /bin/bash
+
+# Kopiëren van lokaal bestand naar VM
+- name: Kopiëren lokaal bestand naar VM
+  hosts: ubuntu
+  become: yes
+  vars:
+    local_file: "bestand_copy.txt"
+    remote_path: "/home/test/bestand_copy.txt"  
+  tasks:
+    - name: Kopiëren van bestand
+      become: yes
+      copy:
+        src: "{{ local_file }}"
+        dest: "{{ remote_path }}"
+        mode: '0644'
+
+# Backup van /etc/ en /var/www/ + cronjob instellen
+- name: Backup maken en cronjob instellen
+  hosts: ubuntu
+  become: yes
+  vars:
+    backup_script_path: "/usr/local/bin/daily_backup.sh"
+    backup_dest: "/tmp"
+  tasks:
+    - name: Installeren van benodigde packages
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - tar
+        - gzip
+        
+    - name: Aanmaken van backup script
+      become: yes
+      copy:
+        dest: "{{ backup_script_path }}"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          DATE=$(date +%Y%m%d)
+          BACKUP_DIR="{{ backup_dest }}"
+          
+          # Backup van /etc/
+          tar -czf $BACKUP_DIR/etc_backup_$DATE.tar.gz /etc/
+          
+          # Backup van /var/www/
+          tar -czf $BACKUP_DIR/www_backup_$DATE.tar.gz /var/www/
+          
+          # Ouder dan 7 dagen verwijderen om ruimte te besparen
+          find $BACKUP_DIR -name "etc_backup_*.tar.gz" -mtime +7 -delete
+          find $BACKUP_DIR -name "www_backup_*.tar.gz" -mtime +7 -delete
+    
+    - name: Toevoegen van dagelijkse cronjob
+      cron:
+        name: "Daily backup"
+        hour: "3"
+        minute: "0"
+        job: "{{ backup_script_path }}"
