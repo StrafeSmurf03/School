@@ -1,0 +1,36 @@
+- name: Install and configure nginx for static website hosting
+  hosts: webservers
+  become: yes
+  tasks:
+    - name: Install nginx
+      apt:
+        name: nginx
+        state: latest
+        update_cache: yes
+    - name: Ensure nginx is running
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+- name: Install and configure MySQL
+  hosts: dataservers
+  become: yes
+  tasks:
+    - name: Install MySQL server
+      apt:
+        name: mysql-server
+        state: latest
+        update_cache: yes
+
+    - name: start and enable mysql service
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Ensure MySQL is running
+      systemd:
+        name: mysql
+        state: started
+        enabled: yes
