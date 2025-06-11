@@ -1,9 +1,9 @@
 [veeam]
-'host ip'
+192.168.1.55
 
 [veeam:vars]
-ansible_user='user_remotehost'
-ansible_password='password_remotehost'
+ansible_user=administrator
+ansible_password=Welkom01
 ansible_port=5986
 ansible_connection=winrm
 ansible_winrm_transport=ntlm

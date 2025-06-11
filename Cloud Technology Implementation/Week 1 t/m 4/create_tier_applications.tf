@@ -77,6 +77,22 @@ resource "azurerm_network_interface" "nic_webtier" {
   }
 }
 
+resource "azurerm_storage_account" "storage_account" {
+  name                     = "storageaccount2"
+  resource_group_name      = data.azurerm_resource_group.rg.name
+  location                 = data.azurerm_resource_group.rg.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS" # Least Redundant Storage, goedkoopst
+  account_kind             = "StorageV2"
+  access_tier              = "Hot" 
+}
+
+resource "azurerm_storage_container" "container" {
+  name                  = "blobcontainer"
+  storage_account_name  = azurerm_storage_account.storage_account.name
+  container_access_type = "blob" 
+}
+
 resource "azurerm_network_interface" "nic_datatier" {
   count               = 2
   name                = "data-nic-${count.index}"
@@ -273,6 +289,8 @@ resource "azurerm_lb_rule" "lbrule-02" {
   backend_address_pool_ids       =  [azurerm_lb_backend_address_pool.public_loadbalancer_backend_address_pool.id]
   probe_id                       = azurerm_lb_probe.http.id
 }
+
+
 
 resource "local_file" "ip_address" {
   content = <<-EOF
