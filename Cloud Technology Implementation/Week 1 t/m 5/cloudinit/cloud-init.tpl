@@ -37,7 +37,7 @@ runcmd:
         # Nginx proxy configuratie voor Blob Storage
         # Wanneer iemand /media/afbeelding.jpg aanvraagt, haalt Nginx deze op uit Blob Storage.
         location /media/ {
-            proxy_pass https://storageaccount2.blob.core.windows.net/blobcontainer/;
+            proxy_pass https://storageaccount2jensban.blob.core.windows.net/blobcontainer/;
             proxy_redirect off;
             proxy_set_header Host "Storage_Account-1.blob.core.windows.net";
             proxy_set_header X-Real-IP $remote_addr;

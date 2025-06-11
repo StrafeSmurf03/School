@@ -78,7 +78,7 @@ resource "azurerm_network_interface" "nic_webtier" {
 }
 
 resource "azurerm_storage_account" "storage_account" {
-  name                     = "storageaccount2"
+  name                     = "storageaccount2jensban"
   resource_group_name      = data.azurerm_resource_group.rg.name
   location                 = data.azurerm_resource_group.rg.location
   account_tier             = "Standard"
@@ -307,4 +307,348 @@ resource "local_file" "ip_address" {
     become_passwd=
     EOF
   filename = "${path.module}/vm_ip_addresses.ini"
+}
+
+
+# Week 5
+
+# Create a subnet specifically for VMSS
+resource "azurerm_subnet" "subnet_vmss" {
+  name                 = "internal_vmss"
+  resource_group_name  = data.azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = ["10.10.3.0/24"]
+}
+
+# Network Security Group for VMSS
+resource "azurerm_network_security_group" "nsg_vmss" {
+  name                = "nsg-vmss-allowinbound-tcp-web"
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
+
+  security_rule {
+    name                       = "Allow_Inbound_SSH"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "Allow_Inbound_HTTP"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  tags = {
+    environment = "Production"
+  }
+}
+
+# Associate NSG with VMSS subnet
+resource "azurerm_subnet_network_security_group_association" "vmss_nsg_association" {
+  subnet_id                 = azurerm_subnet.subnet_vmss.id
+  network_security_group_id = azurerm_network_security_group.nsg_vmss.id
+}
+
+# Public IP for VMSS Load Balancer
+resource "azurerm_public_ip" "vmss_lb_public_ip" {
+  name                = "vmss-lb-public-ip"
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+
+  tags = {
+    environment = "Production"
+  }
+}
+
+# Load Balancer for VMSS
+resource "azurerm_lb" "vmss_loadbalancer" {
+  name                = "vmss-loadbalancer"
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
+  sku                 = "Standard"
+
+  frontend_ip_configuration {
+    name                 = "vmss-lb-frontend"
+    public_ip_address_id = azurerm_public_ip.vmss_lb_public_ip.id
+  }
+
+  tags = {
+    environment = "Production"
+  }
+}
+
+# Backend Address Pool for VMSS Load Balancer
+resource "azurerm_lb_backend_address_pool" "vmss_backend_pool" {
+  loadbalancer_id = azurerm_lb.vmss_loadbalancer.id
+  name            = "vmss-backend-pool"
+}
+
+# Health Probe for VMSS Load Balancer
+resource "azurerm_lb_probe" "vmss_http_probe" {
+  loadbalancer_id = azurerm_lb.vmss_loadbalancer.id
+  name            = "vmss-http-probe"
+  port            = 80
+  protocol        = "Http"
+  request_path    = "/"
+}
+
+# Load Balancer Rule for VMSS
+resource "azurerm_lb_rule" "vmss_lb_rule" {
+  loadbalancer_id                = azurerm_lb.vmss_loadbalancer.id
+  name                           = "vmss-lb-rule"
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = 80
+  frontend_ip_configuration_name = "vmss-lb-frontend"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.vmss_backend_pool.id]
+  probe_id                       = azurerm_lb_probe.vmss_http_probe.id
+}
+
+# Virtual Machine Scale Set
+resource "azurerm_linux_virtual_machine_scale_set" "web_vmss" {
+  name                = "web-vmss"
+  resource_group_name = data.azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
+  sku                 = "Standard_B2ats_v2"
+  instances           = 2
+  admin_username      = var.ssh_user
+
+  # Disable password authentication and use SSH keys
+  disable_password_authentication = true
+
+  admin_ssh_key {
+    username   = var.ssh_user
+    public_key = var.ssh_key
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts-gen2"
+    version   = "latest"
+  }
+
+  os_disk {
+    storage_account_type = "Standard_LRS"
+    caching              = "ReadWrite"
+  }
+
+  network_interface {
+    name    = "vmss-nic"
+    primary = true
+
+    ip_configuration {
+      name                                   = "internal"
+      primary                                = true
+      subnet_id                              = azurerm_subnet.subnet_vmss.id
+      load_balancer_backend_address_pool_ids = [azurerm_lb_backend_address_pool.vmss_backend_pool.id]
+    }
+  }
+
+  # Cloud-init configuration for web server setup
+  custom_data = base64encode(templatefile("${path.module}/cloudinit/cloud-init.tpl", {
+    ssh_username = var.ssh_user
+    ssh_key      = var.ssh_key
+  }))
+
+  tags = {
+    environment = "Production"
+  }
+}
+
+# Autoscale Settings for VMSS
+resource "azurerm_monitor_autoscale_setting" "vmss_autoscale" {
+  name                = "vmss-autoscale-setting"
+  resource_group_name = data.azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
+  target_resource_id  = azurerm_linux_virtual_machine_scale_set.web_vmss.id
+
+  # Default profile 
+  profile {
+    name = "default-profile"
+
+    capacity {
+      default = 2
+      minimum = 1
+      maximum = 5
+    }
+
+    # Scale out rule 
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = azurerm_linux_virtual_machine_scale_set.web_vmss.id
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "GreaterThan"
+        threshold          = 75
+      }
+
+      scale_action {
+        direction = "Increase"
+        type      = "ChangeCount"
+        value     = "1"
+        cooldown  = "PT5M"
+      }
+    }
+
+    # Scale in rule 
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = azurerm_linux_virtual_machine_scale_set.web_vmss.id
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "LessThan"
+        threshold          = 25
+      }
+
+      scale_action {
+        direction = "Decrease"
+        type      = "ChangeCount"
+        value     = "1"
+        cooldown  = "PT5M"
+      }
+    }
+  }
+
+  # February profile
+  profile {
+    name = "february-profile"
+
+    capacity {
+      default = 4
+      minimum = 3
+      maximum = 10
+    }
+
+    fixed_date {
+      timezone = "W. Europe Standard Time"
+      start    = "2025-02-01T00:00:00Z"
+      end      = "2025-02-28T23:59:59Z"
+    }
+
+    # Scale out February 
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = azurerm_linux_virtual_machine_scale_set.web_vmss.id
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "GreaterThan"
+        threshold          = 60
+      }
+
+      scale_action {
+        direction = "Increase"
+        type      = "ChangeCount"
+        value     = "2"
+        cooldown  = "PT3M"
+      }
+    }
+
+    # Scale in rule for February
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = azurerm_linux_virtual_machine_scale_set.web_vmss.id
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "LessThan"
+        threshold          = 30
+      }
+
+      scale_action {
+        direction = "Decrease"
+        type      = "ChangeCount"
+        value     = "1"
+        cooldown  = "PT5M"
+      }
+    }
+  }
+
+  # Maart
+  profile {
+    name = "march-profile"
+
+    capacity {
+      default = 4
+      minimum = 3
+      maximum = 10
+    }
+
+    fixed_date {
+      timezone = "W. Europe Standard Time"
+      start    = "2025-03-01T00:00:00Z"
+      end      = "2025-03-31T23:59:59Z"
+    }
+
+    # Scale out rule 
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = azurerm_linux_virtual_machine_scale_set.web_vmss.id
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "GreaterThan"
+        threshold          = 60
+      }
+
+      scale_action {
+        direction = "Increase"
+        type      = "ChangeCount"
+        value     = "2"
+        cooldown  = "PT3M"
+      }
+    }
+
+    # Scale in rule 
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = azurerm_linux_virtual_machine_scale_set.web_vmss.id
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "LessThan"
+        threshold          = "30"
+      }
+
+      scale_action {
+        direction = "Decrease"
+        type      = "ChangeCount"
+        value     = "1"
+        cooldown  = "PT5M"
+      }
+    }
+  }
+
+  tags = {
+    environment = "Production"
+  }
 }
